@@ -1,0 +1,84 @@
+# Sensitive files - DO NOT COMMIT
+credentials.json
+token.json
+google_credentials.json
+*.json
+!requirements.json
+!package.json
+
+# Viber data files
+viber_missed_calls.json
+manual_missed_calls.txt
+gmail_draft_responses.json
+
+# Log files
+*.log
+viber_monitor.log
+viber_launch.log
+viber_launch_error.log
+viber_auto_start.log
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Test files (but keep main test file)
+# test_*.py
+# *_test.py
+
+# Launch agents
+*.plist
+
+# Personal data
+personal_*
+private_*

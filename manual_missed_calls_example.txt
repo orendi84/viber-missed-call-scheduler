@@ -1,0 +1,14 @@
+# Add missed calls manually for testing:
+# Format: YYYY-MM-DD HH:MM | Caller Name
+# Example: 2025-09-11 14:30 | János Kovács
+
+# Sample missed calls (replace with real data):
+# 2025-09-12 09:30 | John Smith
+# 2025-09-12 11:45 | Maria Garcia
+# 2025-09-12 14:20 | David Wilson
+
+# System will automatically:
+# - Schedule callbacks from 6 PM onward (18:00, 18:15, 18:30...)
+# - Create Google Calendar events
+# - Send macOS notifications
+# - Track multiple calls from same person
