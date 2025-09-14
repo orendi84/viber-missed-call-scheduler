@@ -1,19 +1,35 @@
 #!/usr/bin/env python3
 """
-Google API Authentication System
-Handles OAuth2 authentication for Gmail and Calendar APIs
+Google API Authentication System (Security Enhanced)
+Handles OAuth2 authentication for Gmail and Calendar APIs with enhanced security
 """
 
 import os
 import pickle
+import json
+import logging
+from pathlib import Path
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 class GoogleAPIAuth:
     def __init__(self, credentials_file="credentials.json"):
-        self.credentials_file = credentials_file
-        self.token_file = "token.pickle"
+        # Setup secure logging
+        self.logger = logging.getLogger('google_auth')
+        self.logger.setLevel(logging.INFO)
+        
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+        
+        # Secure file paths
+        self.credentials_file = Path(credentials_file)
+        self.secure_dir = Path.home() / '.viber_scheduler' / 'auth'
+        self.secure_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.token_file = self.secure_dir / "token.pickle"
         
         # Define scopes for Gmail and Calendar access
         self.SCOPES = [
@@ -24,43 +40,56 @@ class GoogleAPIAuth:
             'https://www.googleapis.com/auth/calendar.events'      # Manage Calendar events
         ]
         
+        self.logger.info("Google API Auth initialized with secure storage")
+        
     def authenticate(self):
         """
-        Authenticate and return credentials
+        Authenticate and return credentials with enhanced security
         """
         creds = None
         
-        # Check if token file exists (saved credentials)
-        if os.path.exists(self.token_file):
-            with open(self.token_file, 'rb') as token:
-                creds = pickle.load(token)
+        try:
+            # Check if secure token file exists
+            if self.token_file.exists():
+                self.logger.info("Loading existing credentials from secure storage")
+                with open(self.token_file, 'rb') as token:
+                    creds = pickle.load(token)
         
-        # If there are no valid credentials, get new ones
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                print("Refreshing expired credentials...")
-                creds.refresh(Request())
-            else:
-                if not os.path.exists(self.credentials_file):
-                    print(f"❌ Error: {self.credentials_file} not found!")
-                    print("Please download your OAuth2 credentials JSON file from Google Cloud Console")
-                    print("and save it as 'credentials.json' in the current directory.")
-                    return None
+            # If there are no valid credentials, get new ones
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    self.logger.info("Refreshing expired credentials...")
+                    creds.refresh(Request())
+                else:
+                    if not self.credentials_file.exists():
+                        self.logger.error(f"Credentials file not found: {self.credentials_file}")
+                        print(f"❌ Error: {self.credentials_file} not found!")
+                        print("Please download your OAuth2 credentials JSON file from Google Cloud Console")
+                        print("and save it as 'credentials.json' in the current directory.")
+                        return None
+                    
+                    self.logger.info("Starting OAuth2 authentication...")
+                    print("🔐 Starting OAuth2 authentication...")
+                    print("Your browser will open for Google authentication.")
+                    
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        str(self.credentials_file), self.SCOPES)
+                    creds = flow.run_local_server(port=0)
                 
-                print("🔐 Starting OAuth2 authentication...")
-                print("Your browser will open for Google authentication.")
+                # Save credentials securely
+                with open(self.token_file, 'wb') as token:
+                    pickle.dump(creds, token)
                 
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_file, self.SCOPES)
-                creds = flow.run_local_server(port=0)
+                # Set secure permissions
+                self.token_file.chmod(0o600)
+                self.logger.info(f"Credentials saved securely to {self.token_file}")
+                print("✅ Authentication successful!")
             
-            # Save credentials for next run
-            with open(self.token_file, 'wb') as token:
-                pickle.dump(creds, token)
+            return creds
             
-            print("✅ Authentication successful!")
-        
-        return creds
+        except Exception as e:
+            self.logger.error(f"Authentication failed: {str(e)}")
+            raise
     
     def get_gmail_service(self):
         """Get Gmail API service"""

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Viber Missed Calls Auto-Calendar System (Alternative Approach)
+Viber Missed Calls Auto-Calendar System (Security Enhanced)
 Uses notification monitoring and log analysis since direct database access is restricted
+Enhanced with comprehensive security improvements and operational features
 """
 
 import os
@@ -9,63 +10,209 @@ import json
 import time
 import re
 import subprocess
+import logging
+import logging.handlers
 from datetime import datetime, timedelta
+from typing import Optional, Dict, List, Tuple, Any
+from dataclasses import dataclass
+from enum import Enum
+import functools
+from pathlib import Path
+
 from google_auth import GoogleAPIAuth
+
+# Security and operational enhancements
+class SecurityError(Exception):
+    """Custom exception for security-related errors"""
+    pass
+
+class OperationResult:
+    """Result wrapper for operations with error handling"""
+    def __init__(self, success: bool, data: Any = None, error: str = None):
+        self.success = success
+        self.data = data
+        self.error = error
+
+def setup_secure_logging() -> logging.Logger:
+    """Setup secure, structured logging"""
+    logger = logging.getLogger('viber_scheduler')
+    logger.setLevel(logging.INFO)
+    
+    if not logger.handlers:
+        # Create logs directory
+        log_dir = Path.home() / '.viber_scheduler' / 'logs'
+        log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        
+        # File handler with rotation
+        log_file = log_dir / 'viber_scheduler.log'
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=10*1024*1024, backupCount=5
+        )
+        file_handler.setLevel(logging.INFO)
+        
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        
+        # Formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+    
+    return logger
+
+def validate_caller_name(name: str) -> str:
+    """Validate and sanitize caller names"""
+    if not name or not isinstance(name, str):
+        raise SecurityError("Invalid caller name")
+    
+    # Remove potentially dangerous characters
+    sanitized = re.sub(r'[<>"\'\\\x00-\x1f\x7f-\x9f]', '', name.strip())
+    
+    if len(sanitized) > 100:
+        sanitized = sanitized[:100]
+    
+    if not sanitized:
+        raise SecurityError("Caller name cannot be empty after sanitization")
+    
+    return sanitized
+
+def secure_subprocess_run(cmd: List[str], timeout: int = 30) -> OperationResult:
+    """Secure subprocess execution with timeout and validation"""
+    try:
+        # Validate command
+        if not cmd or not all(isinstance(arg, str) for arg in cmd):
+            return OperationResult(False, error="Invalid command arguments")
+        
+        # Execute with timeout
+        result = subprocess.run(
+            cmd, 
+            capture_output=True, 
+            text=True, 
+            timeout=timeout,
+            check=False
+        )
+        
+        return OperationResult(True, {
+            'stdout': result.stdout,
+            'stderr': result.stderr,
+            'returncode': result.returncode
+        })
+        
+    except subprocess.TimeoutExpired:
+        return OperationResult(False, error=f"Command timed out after {timeout}s")
+    except Exception as e:
+        return OperationResult(False, error=f"Subprocess error: {str(e)}")
 
 class ViberMissedCallTracker:
     def __init__(self):
-        self.auth = GoogleAPIAuth()
-        self.calendar = self.auth.get_calendar_service()
-        self.processed_calls = set()
-        self.missed_call_counts = {}
-        self.last_notification_check = datetime.now()
-        self.load_processed_data()
+        # Initialize secure logging
+        self.logger = setup_secure_logging()
+        self.logger.info("Initializing Viber Missed Call Tracker with security enhancements")
+        
+        try:
+            self.auth = GoogleAPIAuth()
+            self.calendar = self.auth.get_calendar_service()
+            self.processed_calls = set()
+            self.missed_call_counts = {}
+            self.last_notification_check = datetime.now()
+            
+            # Create secure data directory
+            self.data_dir = Path.home() / '.viber_scheduler' / 'data'
+            self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            
+            self.load_processed_data()
+            self.logger.info("Viber Missed Call Tracker initialized successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize tracker: {str(e)}")
+            raise
         
     def load_processed_data(self):
         """Load previously processed calls and missed call counts"""
+        data_file = self.data_dir / 'viber_missed_calls.json'
+        
         try:
-            with open('viber_missed_calls.json', 'r') as f:
-                data = json.load(f)
-                self.processed_calls = set(data.get('processed_calls', []))
-                self.missed_call_counts = data.get('missed_call_counts', {})
+            if data_file.exists():
+                with open(data_file, 'r') as f:
+                    data = json.load(f)
+                    self.processed_calls = set(data.get('processed_calls', []))
+                    self.missed_call_counts = data.get('missed_call_counts', {})
+                    self.logger.info(f"Loaded {len(self.processed_calls)} processed calls")
+            else:
+                self.logger.info("No existing data file found, starting fresh")
         except FileNotFoundError:
             self.processed_calls = set()
             self.missed_call_counts = {}
     
     def save_processed_data(self):
         """Save processed calls and missed call counts"""
-        data = {
-            'processed_calls': list(self.processed_calls),
-            'missed_call_counts': self.missed_call_counts,
-            'last_updated': datetime.now().isoformat()
-        }
-        with open('viber_missed_calls.json', 'w') as f:
-            json.dump(data, f, indent=2)
+        data_file = self.data_dir / 'viber_missed_calls.json'
+        
+        try:
+            data = {
+                'processed_calls': list(self.processed_calls),
+                'missed_call_counts': self.missed_call_counts,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            # Write to temp file first, then atomic rename
+            temp_file = data_file.with_suffix('.json.tmp')
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            # Set secure permissions
+            temp_file.chmod(0o600)
+            
+            # Atomic rename
+            temp_file.rename(data_file)
+            
+            self.logger.info(f"Saved {len(self.processed_calls)} processed calls to secure storage")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save data: {str(e)}")
+            raise
     
     def check_viber_notifications(self):
         """Monitor macOS notification database for Viber missed call notifications"""
         try:
-            # Query macOS notification database
-            cmd = [
-                'sqlite3', 
-                os.path.expanduser('~/Library/Application Support/NotificationCenter/db2/db'),
-                '''SELECT datetime(delivered_date + 978307200, 'unixepoch', 'localtime') as time, 
-                   data FROM record 
-                   WHERE bundleid = 'com.viber.osx' 
-                   AND delivered_date > (strftime('%s', datetime('now', '-1 hour')) - 978307200)
-                   ORDER BY delivered_date DESC;'''
-            ]
+            self.logger.info("Checking Viber notifications for missed calls")
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Secure database path validation
+            db_path = Path.home() / 'Library' / 'Application Support' / 'NotificationCenter' / 'db2' / 'db'
+            if not db_path.exists():
+                self.logger.warning("Notification database not found")
+                return []
             
-            if result.returncode == 0:
-                notifications = result.stdout.strip().split('\n')
+            # Prepare secure SQL query
+            query = '''SELECT datetime(delivered_date + 978307200, 'unixepoch', 'localtime') as time, 
+                              data FROM record 
+                       WHERE bundleid = 'com.viber.osx' 
+                       AND delivered_date > (strftime('%s', datetime('now', '-1 hour')) - 978307200)
+                       ORDER BY delivered_date DESC;'''
+            
+            # Execute with secure subprocess
+            cmd = ['sqlite3', str(db_path), query]
+            result = secure_subprocess_run(cmd, timeout=10)
+            
+            if not result.success:
+                self.logger.error(f"Failed to query notification database: {result.error}")
+                return []
+            
+            if result.data['returncode'] == 0:
+                notifications = result.data['stdout'].strip().split('\n')
                 return self.parse_viber_notifications(notifications)
             else:
+                self.logger.warning(f"Database query returned error code: {result.data['returncode']}")
                 return []
                 
         except Exception as e:
-            print(f"Error checking notifications: {e}")
+            self.logger.error(f"Error checking notifications: {e}")
             return []
     
     def parse_viber_notifications(self, notifications):
@@ -129,39 +276,61 @@ class ViberMissedCallTracker:
             return []
     
     def check_manual_missed_calls(self):
-        """Manual missed call detection - for testing purposes"""
-        # This creates a simple file-based system where you can manually report missed calls
-        missed_calls_file = 'manual_missed_calls.txt'
+        """Manual missed call detection with security validation"""
+        missed_calls_file = Path('manual_missed_calls.txt')
         
-        if not os.path.exists(missed_calls_file):
-            # Create example file
-            with open(missed_calls_file, 'w') as f:
-                f.write("# Add missed calls manually for testing:\n")
-                f.write("# Format: YYYY-MM-DD HH:MM | Caller Name\n")
-                f.write("# Example: 2025-09-11 14:30 | János Kovács\n")
-                f.write("\n")
+        if not missed_calls_file.exists():
+            # Create example file with secure permissions
+            try:
+                with open(missed_calls_file, 'w') as f:
+                    f.write("# Add missed calls manually for testing:\n")
+                    f.write("# Format: YYYY-MM-DD HH:MM | Caller Name\n")
+                    f.write("# Example: 2025-09-11 14:30 | János Kovács\n")
+                    f.write("\n")
+                missed_calls_file.chmod(0o600)
+                self.logger.info("Created manual missed calls template file")
+            except Exception as e:
+                self.logger.error(f"Failed to create template file: {e}")
+            return []
+        
+        # Security: Check file size limit
+        try:
+            if missed_calls_file.stat().st_size > 1024 * 1024:  # 1MB limit
+                self.logger.error("Manual missed calls file too large")
+                return []
+        except Exception as e:
+            self.logger.error(f"Error checking file size: {e}")
             return []
         
         missed_calls = []
         try:
-            with open(missed_calls_file, 'r') as f:
+            with open(missed_calls_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
                 
-            for line in lines:
+            for line_num, line in enumerate(lines, 1):
                 line = line.strip()
                 if line.startswith('#') or not line:
                     continue
                     
                 if '|' in line:
-                    time_str, caller = line.split('|', 1)
-                    time_str = time_str.strip()
-                    caller = caller.strip()
-                    
-                    # Parse the time
                     try:
+                        time_str, caller_raw = line.split('|', 1)
+                        time_str = time_str.strip()
+                        
+                        # Validate and sanitize caller name
+                        caller = validate_caller_name(caller_raw.strip())
+                        
+                        # Parse the time with validation
                         call_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M')
+                        
+                        # Validate date is reasonable
+                        now = datetime.now()
+                        if call_time > now + timedelta(days=1):
+                            self.logger.warning(f"Line {line_num}: Future date ignored: {time_str}")
+                            continue
+                            
                         # Process calls from today and yesterday (handles sleep/wake scenarios)
-                        time_diff = datetime.now() - call_time
+                        time_diff = now - call_time
                         if time_diff < timedelta(hours=48):  # 48 hours to handle weekend sleeps
                             call_id = f"{time_str}_{caller}"
                             if call_id not in self.processed_calls:
@@ -170,12 +339,16 @@ class ViberMissedCallTracker:
                                     'caller': caller,
                                     'call_id': call_id
                                 })
-                    except ValueError:
-                        continue
+                                
+                    except ValueError as e:
+                        self.logger.warning(f"Line {line_num}: Invalid format - {e}")
+                    except SecurityError as e:
+                        self.logger.error(f"Line {line_num}: Security error - {e}")
                         
         except Exception as e:
-            print(f"Error reading manual missed calls: {e}")
+            self.logger.error(f"Error reading manual missed calls: {e}")
         
+        self.logger.info(f"Found {len(missed_calls)} new manual missed calls")
         return missed_calls
     
     def get_next_callback_time(self, caller_name):
