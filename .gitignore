@@ -1,10 +1,8 @@
 # Sensitive files - DO NOT COMMIT
 credentials.json
 token.json
+token.pickle
 google_credentials.json
-*.json
-!requirements.json
-!package.json
 
 # Viber data files
 viber_missed_calls.json
@@ -72,16 +70,9 @@ venv.bak/
 *.backup
 *.old
 
-# Test files (but keep main test file)
-# test_*.py
-# *_test.py
-
 # Launch agents
 *.plist
 
 # Personal data
 personal_*
-private_*token.pickle
-manual_missed_calls.txt
-*.json
-credentials.*
+private_*
