@@ -81,4 +81,7 @@ venv.bak/
 
 # Personal data
 personal_*
-private_*
+private_*token.pickle
+manual_missed_calls.txt
+*.json
+credentials.*
