@@ -28,7 +28,7 @@ This automated system monitors Viber missed calls and creates smart calendar rem
 ### Prerequisites
 
 - macOS (tested on macOS 14+)
-- Python 3.8+
+- Python 3.9+ (zoneinfo; the tzdata package covers Windows and minimal environments)
 - Google Account with Calendar API access
 - Viber installed (optional - system works with manual input)
 
