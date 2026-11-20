@@ -26,7 +26,7 @@ This project follows a simple principle: **Be respectful, be helpful, be collabo
 ### Prerequisites
 
 - macOS 10.14+ (for full functionality)
-- Python 3.8+
+- Python 3.9+ (zoneinfo; the tzdata package covers Windows and minimal environments)
 - Google account for API access
 - Basic knowledge of Python and APIs
 

@@ -12,7 +12,8 @@ import re
 import subprocess
 import logging
 import logging.handlers
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional, Dict, List, Tuple, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -20,6 +21,13 @@ import functools
 from pathlib import Path
 
 from google_auth import GoogleAPIAuth
+
+BUDAPEST_TZ = ZoneInfo('Europe/Budapest')
+
+# Placeholder caller used when no supported notification format matches.
+UNKNOWN_CALLER = "Unknown Caller"
+# Max characters of an unmatched notification payload written to the log.
+MAX_LOGGED_PAYLOAD_CHARS = 120
 
 # Security and operational enhancements
 class SecurityError(Exception):
@@ -65,6 +73,16 @@ def setup_secure_logging() -> logging.Logger:
         logger.addHandler(console_handler)
     
     return logger
+
+def budapest_local_to_utc(local_naive: datetime) -> datetime:
+    """Convert a naive Europe/Budapest wall-clock time to naive UTC.
+
+    DST-safe: subtracts 1 hour in winter (CET) and 2 hours in summer (CEST).
+    Nonexistent or ambiguous wall times on transition days follow zoneinfo's
+    default (fold=0) behavior.
+    """
+    aware = local_naive.replace(tzinfo=BUDAPEST_TZ)
+    return aware.astimezone(timezone.utc).replace(tzinfo=None)
 
 def validate_caller_name(name: str) -> str:
     """Validate and sanitize caller names"""
@@ -233,20 +251,36 @@ class ViberMissedCallTracker:
             # Look for missed call indicators in the notification
             if any(keyword in notification_data.lower() for keyword in ['missed call', 'elmulasztott', 'hívás']):
                 # Try to extract caller name from notification
-                caller = self.extract_caller_from_notification(notification_data)
-                if caller:
-                    missed_calls.append({
-                        'time': time_str,
-                        'caller': caller,
-                        'notification_data': notification_data
-                    })
+                caller = self._match_caller(notification_data)
+                unmatched = caller is None
+                if unmatched:
+                    # Do not mask silently: record the unmatched payload (truncated).
+                    self.logger.warning(
+                        "No supported caller format in missed-call notification; "
+                        "using placeholder. payload=%r",
+                        notification_data[:MAX_LOGGED_PAYLOAD_CHARS]
+                    )
+                    caller = UNKNOWN_CALLER
+                missed_calls.append({
+                    'time': time_str,
+                    'caller': caller,
+                    'notification_data': notification_data,
+                    # Explicit marker; downstream consumers that ignore it see the
+                    # same records as before.
+                    'caller_unmatched': unmatched
+                })
         
         return missed_calls
     
-    def extract_caller_from_notification(self, notification_data):
-        """Extract caller name from notification data"""
-        # This is a simplified approach - Viber notification format may vary
-        # Common patterns: "Missed call from [Name]" or similar
+    def _match_caller(self, notification_data):
+        """Return the caller name, or None if no supported format matches.
+
+        Supported formats (regex, case-insensitive), tried in order:
+          1. "... from <Name>"        e.g. "Missed call from Anna"
+          2. "<Name>: missed ..."     e.g. "Anna: missed call"
+          3. "hívás <Name>"           Hungarian, e.g. "Nem fogadott hívás Anna"
+        Anything else is unsupported; the caller handles that explicitly.
+        """
         patterns = [
             r'from\s+([^,\n]+)',
             r'([^:]+):\s*missed',
@@ -258,22 +292,23 @@ class ViberMissedCallTracker:
             if match:
                 return match.group(1).strip()
         
-        return "Unknown Caller"
+        return None
+    
+    def extract_caller_from_notification(self, notification_data):
+        """Extract caller name; returns UNKNOWN_CALLER if no format matches.
+
+        Kept for backward compatibility. Prefer parse_viber_notifications, which
+        also logs the unmatched payload and flags the record.
+        """
+        return self._match_caller(notification_data) or UNKNOWN_CALLER
     
     def monitor_viber_activity(self):
-        """Alternative: Monitor Viber application activity"""
-        try:
-            # Check if Viber is running and get recent activity
-            # This is a simplified approach - could be enhanced with more sophisticated monitoring
-            
-            # For demonstration, let's create a manual trigger system
-            # You can enhance this to monitor actual Viber activity logs
-            
-            return self.check_manual_missed_calls()
-            
-        except Exception as e:
-            print(f"Error monitoring Viber activity: {e}")
-            return []
+        """Deprecated alias for check_manual_missed_calls().
+
+        There is no automatic Viber activity monitoring; this only reads the
+        manual missed-calls file. Kept so external callers do not break.
+        """
+        return self.check_manual_missed_calls()
     
     def check_manual_missed_calls(self):
         """Manual missed call detection with security validation"""
@@ -357,12 +392,14 @@ class ViberMissedCallTracker:
             today = datetime.now().date()
             base_time = datetime.combine(today, datetime.min.time().replace(hour=18, minute=0))  # 6 PM today
             
-            # Convert to UTC for API query (subtract 2 hours for Europe/Budapest timezone)
-            base_time_utc = base_time - timedelta(hours=2)
+            # base_time is naive Europe/Budapest wall-clock time; convert to UTC for the
+            # API query (DST-aware: UTC+1 in winter, UTC+2 in summer).
+            base_time_utc = budapest_local_to_utc(base_time)
+            end_time_utc = budapest_local_to_utc(base_time + timedelta(hours=4))
             
-            # Get events for today starting from 6 PM local time (4 PM UTC) to 10 PM local time (8 PM UTC)
+            # Get events from 6 PM to 10 PM Budapest local time
             time_min = base_time_utc.isoformat() + 'Z'
-            time_max = (base_time_utc + timedelta(hours=4)).isoformat() + 'Z'  # Until 10 PM local
+            time_max = end_time_utc.isoformat() + 'Z'  # Until 10 PM local
             
             events_result = self.calendar.events().list(
                 calendarId='primary',
@@ -513,9 +550,9 @@ class ViberMissedCallTracker:
         # Try notification monitoring first
         missed_calls = self.check_viber_notifications()
         
-        # Fallback to manual monitoring
+        # Fallback to the manual missed-calls file (no automatic detection exists)
         if not missed_calls:
-            missed_calls = self.monitor_viber_activity()
+            missed_calls = self.check_manual_missed_calls()
         
         new_calls_processed = 0
         for call in missed_calls:
