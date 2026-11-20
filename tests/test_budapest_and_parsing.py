@@ -62,6 +62,9 @@ class CallerParsingTests(unittest.TestCase):
         logged = self.t.logger.warning.call_args[0][1]
         self.assertLessEqual(len(logged), v.MAX_LOGGED_PAYLOAD_CHARS + 2)  # repr quotes
 
+    def test_empty_name_match_is_skipped(self):
+        self.assertEqual(self.t.parse_viber_notifications(["t|Missed call from   "]), [])
+
     def test_legacy_extract_still_returns_placeholder(self):
         self.assertEqual(self.t.extract_caller_from_notification("no pattern here"),
                          v.UNKNOWN_CALLER)

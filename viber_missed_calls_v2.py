@@ -252,6 +252,9 @@ class ViberMissedCallTracker:
             if any(keyword in notification_data.lower() for keyword in ['missed call', 'elmulasztott', 'hívás']):
                 # Try to extract caller name from notification
                 caller = self._match_caller(notification_data)
+                if caller == '':
+                    # A pattern matched but captured no name: skipped, as before.
+                    continue
                 unmatched = caller is None
                 if unmatched:
                     # Do not mask silently: record the unmatched payload (truncated).
@@ -273,7 +276,8 @@ class ViberMissedCallTracker:
         return missed_calls
     
     def _match_caller(self, notification_data):
-        """Return the caller name, or None if no supported format matches.
+        """Return the caller name, None if no supported format matches, or ''
+        if a format matched with an empty name.
 
         Supported formats (regex, case-insensitive), tried in order:
           1. "... from <Name>"        e.g. "Missed call from Anna"
@@ -308,7 +312,11 @@ class ViberMissedCallTracker:
         There is no automatic Viber activity monitoring; this only reads the
         manual missed-calls file. Kept so external callers do not break.
         """
-        return self.check_manual_missed_calls()
+        try:
+            return self.check_manual_missed_calls()
+        except Exception as e:
+            self.logger.error(f"Error reading manual missed calls: {e}")
+            return []
     
     def check_manual_missed_calls(self):
         """Manual missed call detection with security validation"""
@@ -552,7 +560,11 @@ class ViberMissedCallTracker:
         
         # Fallback to the manual missed-calls file (no automatic detection exists)
         if not missed_calls:
-            missed_calls = self.check_manual_missed_calls()
+            try:
+                missed_calls = self.check_manual_missed_calls()
+            except Exception as e:
+                self.logger.error(f"Error reading manual missed calls: {e}")
+                missed_calls = []
         
         new_calls_processed = 0
         for call in missed_calls:
